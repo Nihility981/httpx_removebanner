@@ -2,11 +2,6 @@ package runner
 
 import (
 	"fmt"
-	"math"
-	"os"
-	"regexp"
-	"strings"
-	"github.com/projectdiscovery/httpx/common/slice"
 	"github.com/projectdiscovery/cdncheck"
 	"github.com/projectdiscovery/fileutil"
 	"github.com/projectdiscovery/goconfig"
@@ -18,7 +13,12 @@ import (
 	"github.com/projectdiscovery/httpx/common/customlist"
 	customport "github.com/projectdiscovery/httpx/common/customports"
 	fileutilz "github.com/projectdiscovery/httpx/common/fileutil"
+	"github.com/projectdiscovery/httpx/common/slice"
 	"github.com/projectdiscovery/httpx/common/stringz"
+	"math"
+	"os"
+	"regexp"
+	"strings"
 )
 
 const (
@@ -235,6 +235,7 @@ type Options struct {
 	Asn                       bool
 	OutputMatchCdn            goflags.NormalizedStringSlice
 	OutputFilterCdn           goflags.NormalizedStringSlice
+	ShowBanner				bool
 }
 
 // ParseOptions parses the command line options for application
@@ -325,6 +326,7 @@ func ParseOptions() *Options {
 		flagSet.BoolVarP(&options.responseInStdout, "include-response", "irr", false, "include http request/response in JSON output (-json only)"),
 		flagSet.BoolVar(&options.chainInStdout, "include-chain", false, "include redirect http chain in JSON output (-json only)"),
 		flagSet.BoolVar(&options.StoreChain, "store-chain", false, "include http redirect chain in responses (-sr only)"),
+		flagSet.BoolVar(&options.ShowBanner, "show-banner", false, "is show banner?"),
 	)
 
 	createGroup(flagSet, "configs", "Configurations",
@@ -384,7 +386,9 @@ func ParseOptions() *Options {
 		gologger.Fatal().Msgf("%s\n", err)
 	}
 
-	showBanner()
+	if options.ShowBanner {
+		showBanner()
+	}
 
 	if options.Version {
 		gologger.Info().Msgf("Current Version: %s\n", Version)
@@ -512,7 +516,6 @@ func (options *Options) configureResume() error {
 	options.resumeCfg = &ResumeCfg{}
 	if options.Resume && fileutil.FileExists(DefaultResumeFile) {
 		return goconfig.Load(&options.resumeCfg, DefaultResumeFile)
-
 	}
 	return nil
 }
