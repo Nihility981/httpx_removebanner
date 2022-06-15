@@ -4,8 +4,8 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/Nihility981/httpx_removebanner/runner"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/httpx/runner"
 )
 
 func main() {
