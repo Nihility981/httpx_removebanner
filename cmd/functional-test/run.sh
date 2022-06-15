@@ -16,7 +16,7 @@ go build -o httpx_dev$extension ../httpx
 echo "::endgroup::"
 
 echo "::group::Building latest release of dnsx"
-go build -o httpx$extension -v github.com/projectdiscovery/httpx/cmd/httpx
+go build -o httpx$extension -v github.com/Nihility981/httpx_removebanner/cmd/httpx
 echo "::endgroup::"
 
 echo 'Starting dnsx functional test'

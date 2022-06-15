@@ -1,6 +1,6 @@
 package customlist
 
-import "github.com/projectdiscovery/httpx/common/fileutil"
+import "github.com/Nihility981/httpx_removebanner/common/fileutil"
 
 const maxRecursion = 10
 

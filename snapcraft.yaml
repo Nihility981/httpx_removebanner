@@ -29,6 +29,6 @@ apps:
 
 parts:
   httpx:
-    source: https://github.com/projectdiscovery/httpx.git
+    source: https://github.com/Nihility981/httpx_removebanner.git
     plugin: go
     go-channel: latest/stable

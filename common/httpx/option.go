@@ -59,7 +59,7 @@ var DefaultOptions = Options{
 	VHostIgnoreNumberOfLines: false,
 	VHostStripHTML:           false,
 	VHostSimilarityRatio:     85,
-	DefaultUserAgent:         "httpx - Open-source project (github.com/projectdiscovery/httpx)",
+	DefaultUserAgent:         "httpx - Open-source project (github.com/Nihility981/httpx_removebanner)",
 }
 
 func (options *Options) parseCustomCookies() {

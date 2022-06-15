@@ -1,4 +1,4 @@
-module github.com/projectdiscovery/httpx
+module github.com/Nihility981/httpx_removebanner
 
 go 1.17
 
