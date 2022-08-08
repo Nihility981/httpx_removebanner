@@ -18,18 +18,18 @@ jobs:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
      
       - name: "Set up Go"
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v3
         with: 
-          go-version: 1.17
+          go-version: 1.18
       
       - name: Run unit Tests
         run: |
           go test -coverprofile=./cov.out ./...
 
       - name: Run Gosec Security Scanner
-        run: |
-          go install github.com/securego/gosec/cmd/gosec@latest
-          gosec -no-fail -fmt=sonarqube -out report.json ./...
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt=sonarqube -out report.json ./...'
      
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
