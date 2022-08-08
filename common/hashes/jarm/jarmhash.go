@@ -3,13 +3,13 @@ package jarm
 import (
 	"context"
 	"fmt"
+	"github.com/hdm/jarm-go"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/hdm/jarm-go"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
 )
 

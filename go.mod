@@ -34,7 +34,6 @@ require (
 	github.com/projectdiscovery/wappalyzergo v0.0.52
 	github.com/remeh/sizedwaitgroup v1.0.0
 	github.com/rs/xid v1.4.0
-	github.com/smartystreets/assertions v1.0.0 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/ratelimit v0.2.0
@@ -50,6 +49,7 @@ require (
 	github.com/ammario/ipisp/v2 v2.0.0
 	github.com/hdm/jarm-go v0.0.7
 	github.com/mfonda/simhash v0.0.0-20151007195837-79f94a1100d6
+	github.com/projectdiscovery/httpx v1.2.4
 	go.uber.org/multierr v1.8.0
 )
 
