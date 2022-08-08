@@ -2,15 +2,11 @@ package hashes
 
 import (
 	"fmt"
+	"github.com/hdm/jarm-go"
+	"golang.org/x/net/proxy"
 	"net"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/Nihility981/httpx_removebanner/common/regexhelper"
-	"github.com/RumbleDiscovery/jarm-go"
-	"golang.org/x/net/proxy"
 )
 
 const defaultPort int = 443
@@ -71,23 +67,4 @@ func fingerprint(t target, duration int) string {
 		results = append(results, ans)
 	}
 	return jarm.RawHashToFuzzyHash(strings.Join(results, ","))
-}
-func Jarm(host string, duration int) string {
-	t := target{}
-	if u, err := url.Parse(host); err == nil {
-		if u.Scheme == "http" {
-			return ""
-		}
-		t.Host = u.Hostname()
-		port, _ := strconv.Atoi(u.Port())
-		t.Port = port
-	}
-	if t.Port == 0 {
-		t.Port = defaultPort
-	}
-	hash := fingerprint(t, duration)
-	if regexhelper.JarmHashRegex.MatchString(hash) {
-		return ""
-	}
-	return hash
 }

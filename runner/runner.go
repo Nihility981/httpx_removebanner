@@ -22,6 +22,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nihility981/httpx_removebanner/common/customextract"
+	"github.com/Nihility981/httpx_removebanner/common/hashes/jarm"
+	"github.com/projectdiscovery/fastdialer/fastdialer"
+
 	"github.com/Nihility981/httpx_removebanner/common/hashes"
 	"github.com/ammario/ipisp/v2"
 	"github.com/bluele/gcache"
@@ -31,6 +35,7 @@ import (
 	"github.com/projectdiscovery/cryptoutil"
 	"github.com/projectdiscovery/goconfig"
 	"github.com/projectdiscovery/retryablehttp-go"
+	"github.com/projectdiscovery/sliceutil"
 	"github.com/projectdiscovery/stringsutil"
 	"github.com/projectdiscovery/urlutil"
 
@@ -59,6 +64,7 @@ type Runner struct {
 	options         *Options
 	hp              *httpx.HTTPX
 	wappalyzer      *wappalyzer.Wappalyze
+	fastdialer      *fastdialer.Dialer
 	scanopts        scanOptions
 	hm              *hybrid.HybridMap
 	stats           clistats.StatisticsClient
@@ -78,6 +84,19 @@ func New(options *Options) (*Runner, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "could not create wappalyzer client")
 	}
+
+	dialerOpts := fastdialer.DefaultOptions
+	dialerOpts.WithDialerHistory = true
+	dialerOpts.MaxRetries = 3
+	dialerOpts.DialerTimeout = time.Duration(options.Timeout) * time.Second
+	if len(options.Resolvers) > 0 {
+		dialerOpts.BaseResolvers = options.Resolvers
+	}
+	fastDialer, err := fastdialer.NewDialer(dialerOpts)
+	if err != nil {
+		return nil, errors.Wrap(err, "could not create dialer")
+	}
+	runner.fastdialer = fastDialer
 
 	httpxOptions := httpx.DefaultOptions
 	// Enables automatically tlsgrab if tlsprobe is requested
@@ -125,6 +144,7 @@ func New(options *Options) (*Runner, error) {
 		value = strings.TrimSpace(tokens[1])
 		httpxOptions.CustomHeaders[key] = value
 	}
+	httpxOptions.SniName = options.SniName
 
 	runner.hp, err = httpx.New(&httpxOptions)
 	if err != nil {
@@ -211,9 +231,25 @@ func New(options *Options) (*Runner, error) {
 	scanopts.StoreChain = options.StoreChain
 	scanopts.MaxResponseBodySizeToSave = options.MaxResponseBodySizeToSave
 	scanopts.MaxResponseBodySizeToRead = options.MaxResponseBodySizeToRead
-	if options.OutputExtractRegex != "" {
-		if scanopts.extractRegex, err = regexp.Compile(options.OutputExtractRegex); err != nil {
-			return nil, err
+	scanopts.extractRegexps = make(map[string]*regexp.Regexp)
+
+	if options.OutputExtractRegexs != nil {
+		for _, regex := range options.OutputExtractRegexs {
+			if compiledRegex, err := regexp.Compile(regex); err != nil {
+				return nil, err
+			} else {
+				scanopts.extractRegexps[regex] = compiledRegex
+			}
+		}
+	}
+
+	if options.OutputExtractPresets != nil {
+		for _, regexName := range options.OutputExtractPresets {
+			if regex, ok := customextract.ExtractPresets[regexName]; ok {
+				scanopts.extractRegexps[regexName] = regex
+			} else {
+				gologger.Warning().Msgf("Could not find preset: %s\n", regexName)
+			}
 		}
 	}
 
@@ -542,6 +578,10 @@ func (r *Runner) RunEnumeration() {
 
 		for resp := range output {
 			if resp.err != nil {
+				// Change the error message if any port value passed explicitly
+				if url, err := url.Parse(resp.URL); err == nil && url.Port() != "" {
+					resp.err = errors.New(strings.ReplaceAll(resp.err.Error(), "address", "port"))
+				}
 				gologger.Debug().Msgf("Failed '%s': %s\n", resp.URL, resp.err)
 			}
 			if resp.str == "" {
@@ -591,7 +631,76 @@ func (r *Runner) RunEnumeration() {
 			if len(r.options.matchWordsCount) > 0 && !slice.IntSliceContains(r.options.matchWordsCount, resp.Words) {
 				continue
 			}
-
+			if len(r.options.OutputMatchCdn) > 0 && !stringsutil.EqualFoldAny(resp.CDNName, r.options.OutputMatchCdn...) {
+				continue
+			}
+			if len(r.options.OutputFilterCdn) > 0 && stringsutil.EqualFoldAny(resp.CDNName, r.options.OutputFilterCdn...) {
+				continue
+			}
+			if r.options.OutputMatchResponseTime != "" {
+				filterOps := FilterOperator{flag: "-mrt, -match-response-time"}
+				operator, value, err := filterOps.Parse(r.options.OutputMatchResponseTime)
+				if err != nil {
+					gologger.Fatal().Msg(err.Error())
+				}
+				respTimeTaken, _ := time.ParseDuration(resp.ResponseTime)
+				switch operator {
+				// take negation of >= and >
+				case greaterThanEq, greaterThan:
+					if respTimeTaken < value {
+						continue
+					}
+				// take negation of <= and <
+				case lessThanEq, lessThan:
+					if respTimeTaken > value {
+						continue
+					}
+				// take negation of =
+				case equal:
+					if respTimeTaken != value {
+						continue
+					}
+				// take negation of !=
+				case notEq:
+					if respTimeTaken == value {
+						continue
+					}
+				}
+			}
+			if r.options.OutputFilterResponseTime != "" {
+				filterOps := FilterOperator{flag: "-frt, -filter-response-time"}
+				operator, value, err := filterOps.Parse(r.options.OutputFilterResponseTime)
+				if err != nil {
+					gologger.Fatal().Msg(err.Error())
+				}
+				respTimeTaken, _ := time.ParseDuration(resp.ResponseTime)
+				switch operator {
+				case greaterThanEq:
+					if respTimeTaken >= value {
+						continue
+					}
+				case lessThanEq:
+					if respTimeTaken <= value {
+						continue
+					}
+				case equal:
+					if respTimeTaken == value {
+						continue
+					}
+				case lessThan:
+					if respTimeTaken < value {
+						continue
+					}
+				case greaterThan:
+					if respTimeTaken > value {
+						continue
+					}
+				case notEq:
+					if respTimeTaken != value {
+						continue
+					}
+				}
+			}
 			row := resp.str
 			if r.options.JSONOutput {
 				row = resp.JSON(&r.scanopts)
@@ -656,6 +765,14 @@ func (r *Runner) RunEnumeration() {
 	wgoutput.Wait()
 }
 
+func (r *Runner) GetScanOpts() scanOptions {
+	return r.scanopts
+}
+
+func (r *Runner) Process(t string, wg *sizedwaitgroup.SizedWaitGroup, protocol string, scanopts *scanOptions, output chan Result) {
+	r.process(t, wg, r.hp, protocol, scanopts, output)
+}
+
 func (r *Runner) process(t string, wg *sizedwaitgroup.SizedWaitGroup, hp *httpx.HTTPX, protocol string, scanopts *scanOptions, output chan Result) {
 	protocols := []string{protocol}
 	if scanopts.NoFallback || protocol == httpx.HTTPandHTTPS {
@@ -668,7 +785,7 @@ func (r *Runner) process(t string, wg *sizedwaitgroup.SizedWaitGroup, hp *httpx.
 			for _, method := range scanopts.Methods {
 				for _, prot := range protocols {
 					wg.Add()
-					go func(target, method, protocol string) {
+					go func(target httpx.Target, method, protocol string) {
 						defer wg.Done()
 						result := r.analyze(hp, protocol, target, method, t, scanopts)
 						output <- result
@@ -709,10 +826,10 @@ func (r *Runner) process(t string, wg *sizedwaitgroup.SizedWaitGroup, hp *httpx.
 			for _, wantedProtocol := range wantedProtocols {
 				for _, method := range scanopts.Methods {
 					wg.Add()
-					go func(port int, method, protocol string) {
+					go func(port int, target httpx.Target, method, protocol string) {
 						defer wg.Done()
-						h, _ := urlutil.ChangePort(target, fmt.Sprint(port))
-						result := r.analyze(hp, protocol, h, method, t, scanopts)
+						target.Host, _ = urlutil.ChangePort(target.Host, fmt.Sprint(port))
+						result := r.analyze(hp, protocol, target, method, t, scanopts)
 						output <- result
 						if scanopts.TLSProbe && result.TLSData != nil {
 							scanopts.TLSProbe = false
@@ -729,7 +846,7 @@ func (r *Runner) process(t string, wg *sizedwaitgroup.SizedWaitGroup, hp *httpx.
 								r.process(tt, wg, hp, protocol, scanopts, output)
 							}
 						}
-					}(port, method, wantedProtocol)
+					}(port, target, method, wantedProtocol)
 				}
 			}
 		}
@@ -740,8 +857,8 @@ func (r *Runner) process(t string, wg *sizedwaitgroup.SizedWaitGroup, hp *httpx.
 }
 
 // returns all the targets within a cidr range or the single target
-func (r *Runner) targets(hp *httpx.HTTPX, target string) chan string {
-	results := make(chan string)
+func (r *Runner) targets(hp *httpx.HTTPX, target string) chan httpx.Target {
+	results := make(chan httpx.Target)
 	go func() {
 		defer close(results)
 
@@ -749,7 +866,7 @@ func (r *Runner) targets(hp *httpx.HTTPX, target string) chan string {
 		// *
 		// spaces
 		if strings.ContainsAny(target, "*") || strings.HasPrefix(target, ".") {
-			// trim * and/or . (prefix) from the target to return the domain instead of wildard
+			// trim * and/or . (prefix) from the target to return the domain instead of wilcard
 			target = strings.TrimPrefix(strings.Trim(target, "*"), ".")
 			if !r.testAndSet(target) {
 				return
@@ -763,54 +880,42 @@ func (r *Runner) targets(hp *httpx.HTTPX, target string) chan string {
 				return
 			}
 			for _, ip := range cidrIps {
-				results <- ip
+				results <- httpx.Target{Host: ip}
 			}
 		} else if r.options.ProbeAllIPS {
 			URL, err := urlutil.Parse(target)
 			if err != nil {
-				results <- target
+				results <- httpx.Target{Host: target}
 			}
 			ips, _, err := getDNSData(hp, URL.Host)
 			if err != nil || len(ips) == 0 {
-				results <- target
+				results <- httpx.Target{Host: target}
 			}
 			for _, ip := range ips {
-				results <- strings.Join([]string{ip, target}, ",")
+				results <- httpx.Target{Host: target, CustomIP: ip}
 			}
+		} else if idxComma := strings.Index(target, ","); idxComma > 0 {
+			results <- httpx.Target{Host: target[idxComma+1:], CustomHost: target[:idxComma]}
 		} else {
-			results <- target
+			results <- httpx.Target{Host: target}
 		}
 	}()
 	return results
 }
 
-func (r *Runner) analyze(hp *httpx.HTTPX, protocol, domain, method, origInput string, scanopts *scanOptions) Result {
+func (r *Runner) analyze(hp *httpx.HTTPX, protocol string, target httpx.Target, method, origInput string, scanopts *scanOptions) Result {
 	origProtocol := protocol
 	if protocol == httpx.HTTPorHTTPS || protocol == httpx.HTTPandHTTPS {
 		protocol = httpx.HTTPS
 	}
 	retried := false
 retry:
-	var customHost, customIP string
-	if scanopts.ProbeAllIPS {
-		parts := strings.SplitN(domain, ",", 2)
-		if len(parts) == 2 {
-			customIP = parts[0]
-			domain = parts[1]
-		}
+	if scanopts.VHostInput && target.CustomHost == "" {
+		return Result{Input: origInput}
 	}
-	if scanopts.VHostInput {
-		parts := strings.Split(domain, ",")
-		//nolint:gomnd // not a magic number
-		if len(parts) != 2 {
-			return Result{Input: origInput}
-		}
-		domain = parts[0]
-		customHost = parts[1]
-	}
-	URL, err := urlutil.Parse(domain)
+	URL, err := urlutil.Parse(target.Host)
 	if err != nil {
-		return Result{URL: domain, Input: origInput, err: err}
+		return Result{URL: target.Host, Input: origInput, err: err}
 	}
 
 	// check if we have to skip the host:port as a result of a previous failure
@@ -818,19 +923,19 @@ retry:
 	if r.options.HostMaxErrors >= 0 && r.HostErrorsCache.Has(hostPort) {
 		numberOfErrors, err := r.HostErrorsCache.GetIFPresent(hostPort)
 		if err == nil && numberOfErrors.(int) >= r.options.HostMaxErrors {
-			return Result{URL: domain, err: errors.New("skipping as previously unresponsive")}
+			return Result{URL: target.Host, err: errors.New("skipping as previously unresponsive")}
 		}
 	}
 
 	// check if the combination host:port should be skipped if belonging to a cdn
 	if r.skipCDNPort(URL.Host, URL.Port) {
 		gologger.Debug().Msgf("Skipping cdn target: %s:%s\n", URL.Host, URL.Port)
-		return Result{URL: domain, Input: origInput, err: errors.New("cdn target only allows ports 80 and 443")}
+		return Result{URL: target.Host, Input: origInput, err: errors.New("cdn target only allows ports 80 and 443")}
 	}
 
 	URL.Scheme = protocol
 
-	if !strings.Contains(domain, URL.Port) {
+	if !strings.Contains(target.Host, URL.Port) {
 		URL.Port = ""
 	}
 
@@ -845,9 +950,14 @@ retry:
 		URL.RequestURI += scanopts.RequestURI
 	}
 	var req *retryablehttp.Request
-	if customIP != "" {
-		customHost = URL.Host
-		ctx := context.WithValue(context.Background(), "ip", customIP) //nolint
+	if target.CustomIP != "" {
+		var requestIP string
+		if iputil.IsIPv6(target.CustomIP) {
+			requestIP = fmt.Sprintf("[%s]", target.CustomIP)
+		} else {
+			requestIP = target.CustomIP
+		}
+		ctx := context.WithValue(context.Background(), "ip", requestIP) //nolint
 		req, err = hp.NewRequestWithContext(ctx, method, URL.String())
 	} else {
 		req, err = hp.NewRequest(method, URL.String())
@@ -856,8 +966,8 @@ retry:
 		return Result{URL: URL.String(), Input: origInput, err: err}
 	}
 
-	if customHost != "" {
-		req.Host = customHost
+	if target.CustomHost != "" {
+		req.Host = target.CustomHost
 	}
 
 	if !scanopts.LeaveDefaultPorts {
@@ -1128,7 +1238,15 @@ retry:
 			r.stats.IncrementCounter("requests", 1)
 		}
 	}
-	ip := hp.Dialer.GetDialedIP(URL.Host)
+
+	var ip string
+	if target.CustomIP != "" {
+		ip = target.CustomIP
+	} else {
+		// hp.Dialer.GetDialedIP would return only the last dialed one
+		ip = hp.Dialer.GetDialedIP(URL.Host)
+	}
+
 	var asnResponse interface{ String() string }
 	if r.options.Asn {
 		lookupResult, err := ipisp.LookupIP(context.Background(), net.ParseIP(ip))
@@ -1152,15 +1270,12 @@ retry:
 			builder.WriteRune(']')
 		}
 	}
-	// hp.Dialer.GetDialedIP would return only the last dialed one
-	if customIP != "" {
-		ip = customIP
-	}
+
 	if scanopts.OutputIP || scanopts.ProbeAllIPS {
 		builder.WriteString(fmt.Sprintf(" [%s]", ip))
 	}
 
-	ips, cnames, err := getDNSData(hp, domain)
+	ips, cnames, err := getDNSData(hp, URL.Host)
 	if err != nil {
 		ips = append(ips, ip)
 	}
@@ -1200,11 +1315,17 @@ retry:
 		}
 	}
 
+	var extractRegex []string
 	// extract regex
-	if scanopts.extractRegex != nil {
-		matches := scanopts.extractRegex.FindAllString(string(resp.Data), -1)
-		if len(matches) > 0 {
-			builder.WriteString(" [" + strings.Join(matches, ",") + "]")
+	var extractResult = map[string][]string{}
+	if scanopts.extractRegexps != nil {
+		for regex, compiledRegex := range scanopts.extractRegexps {
+			matches := compiledRegex.FindAllString(string(resp.Data), -1)
+			if len(matches) > 0 {
+				matches = sliceutil.Dedupe(matches)
+				builder.WriteString(" [" + strings.Join(matches, ",") + "]")
+				extractResult[regex] = matches
+			}
 		}
 	}
 
@@ -1293,7 +1414,7 @@ retry:
 	}
 	jarmhash := ""
 	if r.options.Jarm {
-		jarmhash = hashes.Jarm(fullURL, r.options.Timeout)
+		jarmhash = jarm.Jarm(r.fastdialer, fullURL, r.options.Timeout)
 		builder.WriteString(" [")
 		if !scanopts.OutputWithNoColor {
 			builder.WriteString(aurora.Magenta(jarmhash).String())
@@ -1323,7 +1444,7 @@ retry:
 			domainFile = domainFile[:maxFileNameLength]
 		}
 
-		domainFile = strings.ReplaceAll(domainFile, "/", "_") + ".txt"
+		domainFile = strings.ReplaceAll(domainFile, "/", "[slash]") + ".txt"
 		// store response
 		responsePath := path.Join(scanopts.StoreResponseDirectory, domainFile)
 		respRaw := resp.Raw
@@ -1332,7 +1453,7 @@ retry:
 		}
 		writeErr := ioutil.WriteFile(responsePath, []byte(respRaw), 0644)
 		if writeErr != nil {
-			gologger.Warning().Msgf("Could not write response at path '%s', to disk: %s", responsePath, writeErr)
+			gologger.Error().Msgf("Could not write response at path '%s', to disk: %s", responsePath, writeErr)
 		}
 		if scanopts.StoreChain && resp.HasChain() {
 			domainFile = strings.ReplaceAll(domainFile, ".txt", ".chain.txt")
@@ -1407,10 +1528,12 @@ retry:
 		FinalURL:         finalURL,
 		FavIconMMH3:      faviconMMH3,
 		Hashes:           hashesMap,
+		Extracts:         extractResult,
 		Jarm:             jarmhash,
 		Lines:            resp.Lines,
 		Words:            resp.Words,
 		ASN:              asnResponse,
+		ExtractRegex:     extractRegex,
 	}
 }
 
@@ -1435,49 +1558,51 @@ func (o AsnResponse) String() string {
 
 // Result of a scan
 type Result struct {
-	Timestamp        time.Time `json:"timestamp,omitempty" csv:"timestamp"`
-	Request          string    `json:"request,omitempty" csv:"request"`
-	ResponseHeader   string    `json:"response-header,omitempty" csv:"response-header"`
-	Scheme           string    `json:"scheme,omitempty" csv:"scheme"`
-	Port             string    `json:"port,omitempty" csv:"port"`
-	Path             string    `json:"path,omitempty" csv:"path"`
-	A                []string  `json:"a,omitempty" csv:"a"`
-	CNAMEs           []string  `json:"cnames,omitempty" csv:"cnames"`
+	Timestamp        time.Time   `json:"timestamp,omitempty" csv:"timestamp"`
+	ASN              interface{} `json:"asn,omitempty" csv:"asn"`
+	err              error
+	CSPData          *httpx.CSPData      `json:"csp,omitempty" csv:"csp"`
+	TLSData          *cryptoutil.TLSData `json:"tls-grab,omitempty" csv:"tls-grab"`
+	Hashes           map[string]string   `json:"hashes,omitempty" csv:"hashes"`
+	ExtractRegex     []string            `json:"extract-regex,omitempty" csv:"regex"`
+	CDNName          string              `json:"cdn-name,omitempty" csv:"cdn-name"`
+	Port             string              `json:"port,omitempty" csv:"port"`
 	raw              string
 	URL              string `json:"url,omitempty" csv:"url"`
 	Input            string `json:"input,omitempty" csv:"input"`
 	Location         string `json:"location,omitempty" csv:"location"`
 	Title            string `json:"title,omitempty" csv:"title"`
 	str              string
-	err              error
+	Scheme           string              `json:"scheme,omitempty" csv:"scheme"`
 	Error            string              `json:"error,omitempty" csv:"error"`
 	WebServer        string              `json:"webserver,omitempty" csv:"webserver"`
 	ResponseBody     string              `json:"response-body,omitempty" csv:"response-body"`
 	ContentType      string              `json:"content-type,omitempty" csv:"content-type"`
 	Method           string              `json:"method,omitempty" csv:"method"`
 	Host             string              `json:"host,omitempty" csv:"host"`
-	ContentLength    int                 `json:"content-length,omitempty" csv:"content-length"`
+	Path             string              `json:"path,omitempty" csv:"path"`
+	FavIconMMH3      string              `json:"favicon-mmh3,omitempty" csv:"favicon-mmh3"`
+	FinalURL         string              `json:"final-url,omitempty" csv:"final-url"`
+	ResponseHeader   string              `json:"response-header,omitempty" csv:"response-header"`
+	Request          string              `json:"request,omitempty" csv:"request"`
+	ResponseTime     string              `json:"response-time,omitempty" csv:"response-time"`
+	Jarm             string              `json:"jarm,omitempty" csv:"jarm"`
 	ChainStatusCodes []int               `json:"chain-status-codes,omitempty" csv:"chain-status-codes"`
+	A                []string            `json:"a,omitempty" csv:"a"`
+	CNAMEs           []string            `json:"cnames,omitempty" csv:"cnames"`
+	Technologies     []string            `json:"technologies,omitempty" csv:"technologies"`
+	Extracts         map[string][]string `json:"extracts,omitempty" csv:"extracts"`
+	Chain            []httpx.ChainItem   `json:"chain,omitempty" csv:"chain"`
+	Words            int                 `json:"words" csv:"words"`
+	Lines            int                 `json:"lines" csv:"lines"`
 	StatusCode       int                 `json:"status-code,omitempty" csv:"status-code"`
-	TLSData          *cryptoutil.TLSData `json:"tls-grab,omitempty" csv:"tls-grab"`
-	CSPData          *httpx.CSPData      `json:"csp,omitempty" csv:"csp"`
+	ContentLength    int                 `json:"content-length,omitempty" csv:"content-length"`
+	Failed           bool                `json:"failed" csv:"failed"`
 	VHost            bool                `json:"vhost,omitempty" csv:"vhost"`
 	WebSocket        bool                `json:"websocket,omitempty" csv:"websocket"`
-	Pipeline         bool                `json:"pipeline,omitempty" csv:"pipeline"`
-	HTTP2            bool                `json:"http2,omitempty" csv:"http2"`
 	CDN              bool                `json:"cdn,omitempty" csv:"cdn"`
-	CDNName          string              `json:"cdn-name,omitempty" csv:"cdn-name"`
-	ResponseTime     string              `json:"response-time,omitempty" csv:"response-time"`
-	Technologies     []string            `json:"technologies,omitempty" csv:"technologies"`
-	Chain            []httpx.ChainItem   `json:"chain,omitempty" csv:"chain"`
-	FinalURL         string              `json:"final-url,omitempty" csv:"final-url"`
-	Failed           bool                `json:"failed" csv:"failed"`
-	FavIconMMH3      string              `json:"favicon-mmh3,omitempty" csv:"favicon-mmh3"`
-	Hashes           map[string]string   `json:"hashes,omitempty" csv:"hashes"`
-	ASN              interface{}         `json:"asn,omitempty" csv:"asn"`
-	Lines            int                 `json:"lines" csv:"lines"`
-	Words            int                 `json:"words" csv:"words"`
-	Jarm             string              `json:"jarm,omitempty" csv:"jarm"`
+	HTTP2            bool                `json:"http2,omitempty" csv:"http2"`
+	Pipeline         bool                `json:"pipeline,omitempty" csv:"pipeline"`
 }
 
 // JSON the result
