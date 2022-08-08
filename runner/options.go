@@ -9,6 +9,12 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/Nihility981/httpx_removebanner/common/customheader"
+	"github.com/Nihility981/httpx_removebanner/common/customlist"
+	customport "github.com/Nihility981/httpx_removebanner/common/customports"
+	fileutilz "github.com/Nihility981/httpx_removebanner/common/fileutil"
+	"github.com/Nihility981/httpx_removebanner/common/slice"
+	"github.com/Nihility981/httpx_removebanner/common/stringz"
 	"github.com/projectdiscovery/cdncheck"
 	"github.com/projectdiscovery/fileutil"
 	"github.com/projectdiscovery/goconfig"
@@ -16,12 +22,6 @@ import (
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/formatter"
 	"github.com/projectdiscovery/gologger/levels"
-	"github.com/projectdiscovery/httpx/common/customheader"
-	"github.com/projectdiscovery/httpx/common/customlist"
-	customport "github.com/projectdiscovery/httpx/common/customports"
-	fileutilz "github.com/projectdiscovery/httpx/common/fileutil"
-	"github.com/projectdiscovery/httpx/common/slice"
-	"github.com/projectdiscovery/httpx/common/stringz"
 )
 
 const (
