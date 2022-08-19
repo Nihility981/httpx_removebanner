@@ -463,7 +463,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/projectdiscovery/httpx/runner"
+	"github.com/Nihility981/httpx_removebanner/runner"
 )
 
 func main() {
