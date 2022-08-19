@@ -49,7 +49,6 @@ require (
 	github.com/ammario/ipisp/v2 v2.0.0
 	github.com/hdm/jarm-go v0.0.7
 	github.com/mfonda/simhash v0.0.0-20151007195837-79f94a1100d6
-	github.com/projectdiscovery/httpx v1.2.4
 	go.uber.org/multierr v1.8.0
 )
 

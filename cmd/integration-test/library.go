@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/projectdiscovery/httpx/internal/testutils"
-	"github.com/projectdiscovery/httpx/runner"
+	"github.com/Nihility981/httpx_removebanner/internal/testutils"
+	"github.com/Nihility981/httpx_removebanner/runner"
 )
 
 var libraryTestcases = map[string]testutils.TestCase{
